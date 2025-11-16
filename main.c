@@ -2,33 +2,27 @@
 
    Author Name: Vaishnavi Jadhav
    File name: main.c 
-   application: This file registers a block device module, allocates a 256 MB virtual disk,
-             and implements the main driver operations including open, release, read,
-             write, and ioctl. It sets up the gendisk and blk-mq request queue when the
-             module loads, and cleans up all allocated resources when the module is
-             unloaded.
-
+   application: This file registers a simple block device module, creates a virtual disk, and defines basic open, 
+	        release, and ioctl functions. It sets up the disk structure, initializes it when the module loads, 
+	        and removes it when the module is unloaded.
 	        
-   Note: All Sprint 2 tasks have been completed, including implementing read and write handling, 
-	allocating memory for the 256 MB virtual disk using vmalloc, and setting up the block device logic. 
-	The logic for open and release functions were also added in this sprint.
-
+   Note: All Sprint 1 tasks have been completed, including block device registration, disk creation, and basic driver setup.
 
 
 */
 
-#include <linux/module.h>       
-#include <linux/init.h>        
-#include <linux/kernel.h>     
-#include <linux/fs.h>          
-#include <linux/blkdev.h>      
-#include <linux/blk-mq.h>       
-
-#include <linux/vmalloc.h>      
-#include <linux/mutex.h>      
-#include <linux/atomic.h>       
-#include <linux/uaccess.h>    
-#include <linux/version.h>      
+#include <linux/module.h>       // module_init, module_exit, MODULE_LICENSE
+#include <linux/init.h>         // __init, __exit
+#include <linux/kernel.h>       // pr_info(), printk()
+#include <linux/fs.h>           // register_blkdev, block_device_operations
+#include <linux/blkdev.h>       // gendisk, blk_mq interfaces
+#include <linux/blk-mq.h>       // blk_mq_tag_set, blk_mq_ops
+//#include <linux/genhd.h>        // add_disk(), del_gendisk()
+#include <linux/vmalloc.h>      // vmalloc(), vfree()
+#include <linux/mutex.h>        // mutex_init, mutex_lock/unlock
+#include <linux/atomic.h>       // atomic_t, atomic_set/read
+#include <linux/uaccess.h>      // copy_to_user, copy_from_user
+#include <linux/version.h>      // optional (kernel version checks)
 
 
 #include "comp_blkdrv.h"
@@ -36,7 +30,6 @@
 
 
 
-#define MAX_WRITES  4096 
 
 MODULE_LICENSE("Dual BSD/GPL");
 
@@ -46,7 +39,9 @@ MODULE_LICENSE("Dual BSD/GPL");
 
 #define COMPBLK_DISK_NAME  "compblk0"
 
+//#define COMPBLK_SECTOR_SIZE   512
 
+//#define COMPBLK_NSECTORS      ((128ULL * 1024 * 1024) / COMPBLK_SECTOR_SIZE)
 
 #define COMPBLK_DISK_SIZE   (256 * 1024 * 1024)   // 256 MB virtual disk
 #define COMPBLK_SECTOR_SIZE 512
@@ -59,14 +54,6 @@ struct write_info
     sector_t start_sector;
     sector_t end_sector;
     size_t bytes_written;
-};
-
-
-struct write_entry {
-    sector_t start_sector;
-    sector_t num_sectors;
-    size_t byte_len;
-    bool valid;
 };
 
 
@@ -84,20 +71,14 @@ struct compblk_dev
 	
         struct mutex               lock;  
         
-        size_t                     used_space;   
-          
-        struct write_info          last_write;   
-          
-        struct write_entry table[MAX_WRITES];
-        
-        int write_count;  
-        
+        size_t                     used_space;     // total bytes used
+        struct write_info          last_write;     // metadata for latest write     
 };
 
 static struct compblk_dev comp_dev;
 
 
-
+/* Define block device operations */
 static const struct block_device_operations compblk_fops = {
     .owner = THIS_MODULE,
     .open = compblk_open,
@@ -106,87 +87,51 @@ static const struct block_device_operations compblk_fops = {
 };
 
 
-
-static blk_status_t compblk_handle_read(struct compblk_dev *dev, struct request *rq)
+static blk_status_t compblk_queue_rq(struct blk_mq_hw_ctx *hctx,
+                                     const struct blk_mq_queue_data *bd)
 {
+    struct request *rq = bd->rq;
+    struct compblk_dev *dev = rq->q->queuedata;
     struct bio_vec bvec;
     struct req_iterator iter;
-    void *dst;
-    size_t len;
-    sector_t start_sector = blk_rq_pos(rq);
-    unsigned long offset = start_sector * COMPBLK_SECTOR_SIZE;
-
-    if (offset >= COMPBLK_DISK_SIZE)
-     {
-        pr_err("compblk: READ beyond end of disk\n");
-        blk_mq_end_request(rq, BLK_STS_IOERR);
-        return BLK_STS_IOERR;
-    }
-
-    rq_for_each_segment(bvec, rq, iter)
-     {
-
-        dst = page_address(bvec.bv_page) + bvec.bv_offset;
-        len = bvec.bv_len;
-
-      
-        if (offset + len > COMPBLK_DISK_SIZE)
-            len = COMPBLK_DISK_SIZE - offset;
-            
-            
-
-        memcpy(dst, dev->data + offset, len);
-        offset += len;
-    }
-
-    blk_mq_end_request(rq, BLK_STS_OK);
-    return BLK_STS_OK;
-}
-
-
-static blk_status_t compblk_handle_write(struct compblk_dev *dev, struct request *rq)
-{
-    struct bio_vec bvec;
-    struct req_iterator iter;
-    
     void *buffer;
     sector_t start_sector, end_sector;
-    
     unsigned long offset;
     unsigned int len;
     size_t total_bytes = 0;
 
+    blk_mq_start_request(rq);
+
     start_sector = blk_rq_pos(rq);
     offset = start_sector * COMPBLK_SECTOR_SIZE;
 
-    if (offset >= COMPBLK_DISK_SIZE) 
-    {
+    if (offset >= COMPBLK_DISK_SIZE) {
         pr_err("compblk: invalid start offset beyond disk size\n");
-        
         blk_mq_end_request(rq, BLK_STS_IOERR);
         return BLK_STS_IOERR;
     }
 
     mutex_lock(&dev->lock);
 
-    rq_for_each_segment(bvec, rq, iter) 
-    {
+    rq_for_each_segment(bvec, rq, iter) {
         buffer = page_address(bvec.bv_page) + bvec.bv_offset;
         len = bvec.bv_len;
 
-        if (offset + len > COMPBLK_DISK_SIZE)
+        if (offset + len > COMPBLK_DISK_SIZE) {
+            pr_warn("compblk: truncated write at disk boundary\n");
             len = COMPBLK_DISK_SIZE - offset;
+        }
 
         memcpy(dev->data + offset, buffer, len);
         offset += len;
         total_bytes += len;
     }
 
+    // calculate sectors written
     end_sector = start_sector + (total_bytes / COMPBLK_SECTOR_SIZE) - 1;
-    
 
+    // update tracking info
     dev->used_space += total_bytes;
-    
     if (dev->used_space > COMPBLK_DISK_SIZE)
         dev->used_space = COMPBLK_DISK_SIZE;
 
@@ -194,31 +139,22 @@ static blk_status_t compblk_handle_write(struct compblk_dev *dev, struct request
     dev->last_write.end_sector   = end_sector;
     dev->last_write.bytes_written = total_bytes;
 
+   unsigned int usage_percent = (dev->used_space * 100) / COMPBLK_DISK_SIZE;
+
+	pr_info("compblk: write complete: start=%llu end=%llu bytes=%zu used=%zu/%u (%u%%)\n",
+		(unsigned long long)start_sector,
+		(unsigned long long)end_sector,
+		total_bytes,
+		dev->used_space,
+		COMPBLK_DISK_SIZE,
+		usage_percent);
+ 
+
     mutex_unlock(&dev->lock);
 
     blk_mq_end_request(rq, BLK_STS_OK);
     return BLK_STS_OK;
 }
-
-static blk_status_t compblk_queue_rq(struct blk_mq_hw_ctx *hctx, const struct blk_mq_queue_data *bd)
-{
-    struct request *rq = bd->rq;
-    struct compblk_dev *dev = rq->q->queuedata;
-
-    blk_mq_start_request(rq);
-
-    if (rq_data_dir(rq) == WRITE)
-     {
-        return compblk_handle_write(dev, rq);
-        
-    }
-     else
-     {
-        return compblk_handle_read(dev, rq);
-        
-    }
-}
-
 
 static int compblk_open(struct gendisk *gd, blk_mode_t mode)
 {
@@ -227,7 +163,7 @@ static int compblk_open(struct gendisk *gd, blk_mode_t mode)
     if (atomic_inc_return(&dev->open_count) == 1)
         pr_info("compblk: first open\n");
 
-    printk("compblk: opened (users = %d, mode = 0x%x)\n",
+    pr_info("compblk: opened (users = %d, mode = 0x%x)\n",
             atomic_read(&dev->open_count), mode);
 
     return 0;
@@ -238,7 +174,7 @@ static void compblk_release(struct gendisk *gd)
     struct compblk_dev *dev = gd->private_data;
 
     if (atomic_dec_return(&dev->open_count) == 0)
-        printk("compblk: last close\n");
+        pr_info("compblk: last close\n");
 }
 
 static int compblk_ioctl(struct block_device *bdev, fmode_t mode, unsigned int cmd, unsigned long arg)
