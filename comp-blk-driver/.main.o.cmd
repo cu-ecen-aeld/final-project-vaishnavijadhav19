@@ -967,7 +967,6 @@ deps_/home/vaishnavi/Documents/AESD_FINAL_PROJECT/final-project-vaishnavijadhav1
     $(wildcard include/config/HAVE_MOD_ARCH_SPECIFIC) \
     $(wildcard include/config/MODULES_USE_ELF_REL) \
     $(wildcard include/config/MODULES_USE_ELF_RELA) \
-  /home/vaishnavi/Documents/AESD_FINAL_PROJECT/final-project-vaishnavijadhav19/comp-blk-driver/comp_blkdrv.h \
   include/linux/blkdev.h \
     $(wildcard include/config/BLOCK_HOLDER_DEPRECATED) \
     $(wildcard include/config/BLK_DEV_ZONED) \
@@ -1259,6 +1258,25 @@ deps_/home/vaishnavi/Documents/AESD_FINAL_PROJECT/final-project-vaishnavijadhav1
   include/uapi/linux/blkzoned.h \
   include/linux/sbitmap.h \
   include/linux/file.h \
+  include/linux/blk-mq.h \
+    $(wildcard include/config/BLK_WBT) \
+    $(wildcard include/config/BLK_DEBUG_FS) \
+    $(wildcard include/config/FAIL_IO_TIMEOUT) \
+  include/linux/scatterlist.h \
+    $(wildcard include/config/NEED_SG_DMA_LENGTH) \
+    $(wildcard include/config/NEED_SG_DMA_FLAGS) \
+    $(wildcard include/config/DEBUG_SG) \
+    $(wildcard include/config/SGL_ALLOC) \
+    $(wildcard include/config/ARCH_NO_SG_CHAIN) \
+    $(wildcard include/config/SG_POOL) \
+  include/linux/prefetch.h \
+  include/linux/vmalloc.h \
+    $(wildcard include/config/HAVE_ARCH_HUGE_VMALLOC) \
+  arch/arm64/include/asm/vmalloc.h \
+    $(wildcard include/config/PTDUMP_DEBUGFS) \
+  include/generated/uapi/linux/version.h \
+  /home/vaishnavi/Documents/AESD_FINAL_PROJECT/final-project-vaishnavijadhav19/comp-blk-driver/comp_blkdrv.h \
+  include/uapi/linux/hdreg.h \
 
 /home/vaishnavi/Documents/AESD_FINAL_PROJECT/final-project-vaishnavijadhav19/comp-blk-driver/main.o: $(deps_/home/vaishnavi/Documents/AESD_FINAL_PROJECT/final-project-vaishnavijadhav19/comp-blk-driver/main.o)
 
