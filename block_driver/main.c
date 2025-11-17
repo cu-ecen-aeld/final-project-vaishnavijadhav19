@@ -106,13 +106,18 @@ static const struct block_device_operations compblk_fops = {
 };
 
 
-
+/*
+ * Handles read requests from the block layer.
+ * Copies data from virtual disk buffer into the user’s read buffer.
+ */
 static blk_status_t compblk_handle_read(struct compblk_dev *dev, struct request *rq)
 {
     struct bio_vec bvec;
     struct req_iterator iter;
+    
     void *dst;
     size_t len;
+    
     sector_t start_sector = blk_rq_pos(rq);
     unsigned long offset = start_sector * COMPBLK_SECTOR_SIZE;
 
@@ -138,12 +143,28 @@ static blk_status_t compblk_handle_read(struct compblk_dev *dev, struct request 
         memcpy(dst, dev->data + offset, len);
         offset += len;
     }
+    
+   sector_t end_sector = start_sector + (rq->__data_len / COMPBLK_SECTOR_SIZE) - 1;
+   
+
+
+      printk(KERN_INFO "compblk: READ complete — start_sector=%llu end_sector=%llu bytes=%u\n",
+       (unsigned long long)start_sector,
+       (unsigned long long)end_sector,
+       rq->__data_len);
+
+
 
     blk_mq_end_request(rq, BLK_STS_OK);
     return BLK_STS_OK;
 }
 
-
+/*
+ * Handles write requests from the block layer.
+ * Copies data from the user’s write buffer into virtual disk.
+ * Updates used space and records where the last write happened.
+ * Prevents writing past the end of the virtual disk.
+ */
 static blk_status_t compblk_handle_write(struct compblk_dev *dev, struct request *rq)
 {
     struct bio_vec bvec;
@@ -163,6 +184,7 @@ static blk_status_t compblk_handle_write(struct compblk_dev *dev, struct request
     {
         pr_err("compblk: invalid start offset beyond disk size\n");
         
+        
         blk_mq_end_request(rq, BLK_STS_IOERR);
         return BLK_STS_IOERR;
     }
@@ -178,6 +200,8 @@ static blk_status_t compblk_handle_write(struct compblk_dev *dev, struct request
             len = COMPBLK_DISK_SIZE - offset;
 
         memcpy(dev->data + offset, buffer, len);
+        
+        
         offset += len;
         total_bytes += len;
     }
@@ -195,11 +219,24 @@ static blk_status_t compblk_handle_write(struct compblk_dev *dev, struct request
     dev->last_write.bytes_written = total_bytes;
 
     mutex_unlock(&dev->lock);
+    
+  printk(KERN_INFO "compblk: WRITE complete — start_sector=%llu end_sector=%llu bytes=%zu\n",
+       (unsigned long long)start_sector,
+       (unsigned long long)end_sector,
+       total_bytes);
+
+
 
     blk_mq_end_request(rq, BLK_STS_OK);
     return BLK_STS_OK;
 }
 
+
+/*
+ * Main request handler for the block device.
+ * Checks whether the request is a read or write
+ * and sends it to the correct handler function.
+ */
 static blk_status_t compblk_queue_rq(struct blk_mq_hw_ctx *hctx, const struct blk_mq_queue_data *bd)
 {
     struct request *rq = bd->rq;
@@ -219,7 +256,10 @@ static blk_status_t compblk_queue_rq(struct blk_mq_hw_ctx *hctx, const struct bl
     }
 }
 
-
+/*
+ * Called when the block device is opened.
+ * 
+ */
 static int compblk_open(struct gendisk *gd, blk_mode_t mode)
 {
     struct compblk_dev *dev = gd->private_data;
@@ -233,6 +273,11 @@ static int compblk_open(struct gendisk *gd, blk_mode_t mode)
     return 0;
 }
 
+
+/*
+ * Called when the block device is closed.
+ * 
+ */
 static void compblk_release(struct gendisk *gd)
 {
     struct compblk_dev *dev = gd->private_data;
@@ -256,11 +301,17 @@ static const struct blk_mq_ops compblk_mq_ops = {
 };
 
 
+
+/*
+ * Creates and sets up the virtual block device.
+ * Allocates memory for the disk, initializes locks and counters,
+ * sets up blk-mq tag set, creates the gendisk, and registers it.
+ */
 static int compblk_create_disk(struct compblk_dev *dev)
 {
 	int ret;
 	
-	   
+	   //sprint 2 task
 	dev->data = vmalloc(COMPBLK_DISK_SIZE);
 	
 	    if (!dev->data) 
@@ -327,18 +378,18 @@ static int compblk_create_disk(struct compblk_dev *dev)
 	dev->gd->flags       |= GENHD_FL_NO_PART; 
 	strscpy(dev->gd->disk_name, COMPBLK_DISK_NAME, DISK_NAME_LEN);
 
-	dev->gd->queue->queuedata = dev; 
 	blk_queue_logical_block_size(dev->gd->queue, COMPBLK_SECTOR_SIZE);
-	
-	
-	set_capacity(dev->gd, COMPBLK_NSECTORS);
+        set_capacity(dev->gd, COMPBLK_NSECTORS);
 
-	
 	add_disk(dev->gd);
-	
-	printk("compblk: /dev/%s registered (%llu sectors)\n", dev->gd->disk_name, (unsigned long long)COMPBLK_NSECTORS);
-	
-	return 0;
+
+
+	dev->gd->queue->queuedata = dev;
+
+		
+		printk("compblk: /dev/%s registered (%llu sectors)\n", dev->gd->disk_name, (unsigned long long)COMPBLK_NSECTORS);
+		
+		return 0;
 
 err_free_tagset:
 
