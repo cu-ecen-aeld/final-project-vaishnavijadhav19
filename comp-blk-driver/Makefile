@@ -1,24 +1,8 @@
-
-
-
-obj-m := main.o
-
-
-ifneq ($(KERNELRELEASE),)
-	obj-m := main.o
-
-else
-
-KDIR ?= /home/vaishnavi/linux-rpi
-ARCH ?= arm64
-CROSS_COMPILE ?= aarch64-none-linux-gnu-
-PWD := $(shell pwd)
+obj-m += main.o
 
 all:
-	$(MAKE) -C $(KDIR) M=$(PWD) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) modules
+	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
 
 clean:
-	$(MAKE) -C $(KDIR) M=$(PWD) clean
-
-endif
+	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
 

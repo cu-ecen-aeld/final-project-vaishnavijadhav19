@@ -1,7 +1,15 @@
 #include <linux/module.h>
+#define INCLUDE_VERMAGIC
+#include <linux/build-salt.h>
+#include <linux/elfnote-lto.h>
 #include <linux/export-internal.h>
+#include <linux/vermagic.h>
 #include <linux/compiler.h>
 
+BUILD_SALT;
+BUILD_LTO_INFO;
+
+MODULE_INFO(vermagic, VERMAGIC_STRING);
 MODULE_INFO(name, KBUILD_MODNAME);
 
 __visible struct module __this_module
@@ -14,36 +22,39 @@ __section(".gnu.linkonce.this_module") = {
 	.arch = MODULE_ARCH_INIT,
 };
 
+#ifdef CONFIG_RETPOLINE
+MODULE_INFO(retpoline, "Y");
+#endif
 
 
 static const struct modversion_info ____versions[]
 __used __section("__versions") = {
-	{ 0x122c3a7e, "_printk" },
-	{ 0xa65c6def, "alt_cb_patch_nops" },
-	{ 0xab7819e9, "del_gendisk" },
-	{ 0x57a1e482, "blk_mq_destroy_queue" },
-	{ 0x340f1542, "put_disk" },
-	{ 0x999e8297, "vfree" },
-	{ 0xa5c065b2, "blk_mq_free_tag_set" },
+	{ 0x92997ed8, "_printk" },
+	{ 0x8631c9ba, "alt_cb_patch_nops" },
+	{ 0x9305c171, "del_gendisk" },
+	{ 0x435b4a58, "blk_mq_destroy_queue" },
+	{ 0xf6d2973b, "put_disk" },
+	{ 0xf46cb4b, "blk_mq_free_tag_set" },
 	{ 0xb5a459dc, "unregister_blkdev" },
+	{ 0x999e8297, "vfree" },
 	{ 0x720a27a7, "__register_blkdev" },
-	{ 0x1b2fa1a9, "vmalloc_noprof" },
+	{ 0xd6ee688f, "vmalloc" },
 	{ 0xdcb764ad, "memset" },
 	{ 0xcefb0c9f, "__mutex_init" },
-	{ 0x82f86bee, "blk_mq_alloc_tag_set" },
-	{ 0xc9e27b0d, "__blk_mq_alloc_disk" },
-	{ 0x476b165a, "sized_strscpy" },
-	{ 0x3df229cf, "set_capacity" },
-	{ 0x356f2a7f, "device_add_disk" },
-	{ 0xc1a4457d, "blk_mq_start_request" },
+	{ 0x6dd9d3f8, "blk_mq_alloc_tag_set" },
+	{ 0xe9d266da, "__blk_mq_alloc_disk" },
+	{ 0xdd64e639, "strscpy" },
+	{ 0x1afb81ef, "set_capacity" },
+	{ 0xfa4c0cc8, "device_add_disk" },
+	{ 0xc01003e1, "blk_mq_start_request" },
 	{ 0x4dfa8d4b, "mutex_lock" },
 	{ 0x4829a47e, "memcpy" },
 	{ 0x3213f038, "mutex_unlock" },
-	{ 0x1ef59ee5, "blk_mq_end_request" },
-	{ 0x39ff040a, "module_layout" },
+	{ 0x76b1f176, "blk_mq_end_request" },
+	{ 0x8f80e6e5, "module_layout" },
 };
 
 MODULE_INFO(depends, "");
 
 
-MODULE_INFO(srcversion, "D4F8EF19993388B1E71BDF5");
+MODULE_INFO(srcversion, "9FAE3DA75489FC55E359825");

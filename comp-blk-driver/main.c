@@ -249,6 +249,8 @@ static blk_status_t compblk_queue_rq(struct blk_mq_hw_ctx *hctx,const struct blk
  * Called when the block device is opened.
  * Increases open counter 
  */
+ 
+/*
 static int compblk_open(struct gendisk *gd, blk_mode_t mode)
 {
     struct compblk_dev *dev = gd->private_data;
@@ -260,19 +262,35 @@ static int compblk_open(struct gendisk *gd, blk_mode_t mode)
 
     return 0;
 }
+*/
+
+
+static int compblk_open(struct block_device *bdev, fmode_t mode)
+{
+    struct compblk_dev *dev = bdev->bd_disk->private_data;
+
+    if (atomic_inc_return(&dev->open_count) == 1)
+        pr_info("compblk: first open\n");
+
+    pr_info("compblk: opened (users = %d, mode = 0x%x)\n",
+            atomic_read(&dev->open_count), mode);
+
+    return 0;
+}
 
 
 /*
  * Called when the block device is closed.
  * Decreases open counter and prints when last user closes it.
  */
-static void compblk_release(struct gendisk *gd)
+static void compblk_release(struct gendisk *gd, fmode_t mode)
 {
     struct compblk_dev *dev = gd->private_data;
 
     if (atomic_dec_return(&dev->open_count) == 0)
-        printk("compblk: last close\n");
+        pr_info("compblk: last close\n");
 }
+
 
 
 /*
@@ -351,8 +369,8 @@ static int compblk_create_disk(struct compblk_dev *dev)
 	}
 
 	
-	//dev->gd = blk_mq_alloc_disk(&dev->tag_set, dev);
-	dev->gd = blk_mq_alloc_disk(&dev->tag_set, NULL, dev);
+	dev->gd = blk_mq_alloc_disk(&dev->tag_set, dev);
+	//dev->gd = blk_mq_alloc_disk(&dev->tag_set, NULL, dev);
 
 	if (IS_ERR(dev->gd))
 	 {
