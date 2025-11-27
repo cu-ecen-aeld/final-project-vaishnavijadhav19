@@ -1,6 +1,7 @@
-CC       := gcc
-CFLAGS   := -Wall -O2
-LDFLAGS  := -lssl -lcrypto -lpthread
+CC ?= gcc
+CFLAGS ?= -Wall -O2
+LDFLAGS ?= -lssl -lcrypto -lpthread
+
 
 TARGETS  := sendfile_user_server sendfile_user_client
 
