@@ -1,1 +1,0 @@
-cmd_/home/anujajoshi/comp-blk-driver/Module.symvers :=  sed 's/ko$$/o/'  /home/anujajoshi/comp-blk-driver/modules.order | scripts/mod/modpost -m -a    -o /home/anujajoshi/comp-blk-driver/Module.symvers -e -i Module.symvers -T - 

@@ -1,1 +1,0 @@
-cmd_/home/anujajoshi/comp-blk-driver/main.ko := ld -r -EL  -maarch64elf -z noexecstack --build-id=sha1  -T scripts/module.lds -o /home/anujajoshi/comp-blk-driver/main.ko /home/anujajoshi/comp-blk-driver/main.o /home/anujajoshi/comp-blk-driver/main.mod.o;  true

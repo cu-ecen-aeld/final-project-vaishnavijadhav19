@@ -1,1 +1,1 @@
-/home/anujajoshi/comp-blk-driver/main.o
+/home/anujajoshi/main_block_driver/comp-blk-driver/main.o
