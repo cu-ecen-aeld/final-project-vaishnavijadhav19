@@ -1,3 +1,4 @@
+//client
 /*
 	sendfile_user_client.c
 	Author - Anuja Joshi
@@ -32,13 +33,15 @@
 #define TCP_PORT 9000
 
 #ifdef RPI1 
-#define TCP_SERVER_IP "10.0.0.167"  // <--RPI IP
+//#define TCP_SERVER_IP "127.0.0.1"  // <--RPI IP
 //#define TCP_SERVER_IP "10.0.2.15"//ubuntu testing
+static const char *g_server_ip = NULL;   // will be set from argv[1]
 #endif
-#ifdef RPI2
-#define TCP_SERVER_IP "10.0.0.167"  // <-- RPI IP
+//#ifdef RPI2
+//#define TCP_SERVER_IP "127.0.0.1"  // <-- RPI IP
 //#define TCP_SERVER_IP "10.0.2.15"//ubuntu testing
-#endif
+//static const char *g_server_ip = NULL;   // will be set from argv[1]
+//#endif
 
 #define BUF_SIZE 4096
 #define MAX_FILES 1024
@@ -133,7 +136,22 @@ static int send_file_tcp_no_sha(const char *fname)
     memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET; //IPv4
     sa.sin_port = htons(TCP_PORT);
-    inet_pton(AF_INET, TCP_SERVER_IP, &sa.sin_addr); //convert IP string to binary
+    
+    if (!g_server_ip) 
+    {
+	fprintf(stderr, "Server IP not set\n");
+	close(s);
+	fclose(fp);
+	return -1;
+    }
+
+    if (inet_pton(AF_INET, g_server_ip, &sa.sin_addr) <= 0) { // convert IP string to binary
+        perror("inet_pton");
+        close(s);
+        fclose(fp);
+        return -1;
+    }
+    //inet_pton(AF_INET, TCP_SERVER_IP, &sa.sin_addr); //convert IP string to binary
 
     if (connect(s, (struct sockaddr *)&sa, sizeof(sa)) < 0) 
     {
@@ -189,7 +207,22 @@ static int send_file_tcp_with_sha(const char *fname, unsigned char out_sha[32])
     memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET; //IPv4
     sa.sin_port = htons(TCP_PORT);
-    inet_pton(AF_INET, TCP_SERVER_IP, &sa.sin_addr);
+    
+    if (!g_server_ip) 
+    {
+        fprintf(stderr, "Server IP not set\n");
+        close(s);
+        fclose(fp);
+        return -1;
+    }
+
+    if (inet_pton(AF_INET, g_server_ip, &sa.sin_addr) <= 0) {
+        perror("inet_pton");
+        close(s);
+        fclose(fp);
+        return -1;
+    }
+    //inet_pton(AF_INET, TCP_SERVER_IP, &sa.sin_addr);
 
     if (connect(s, (struct sockaddr *)&sa, sizeof(sa)) < 0) 
     {
@@ -328,7 +361,8 @@ static int write_file_to_dev(const char *src_path, const char *dev_path)
     	perror("fopen src"); 
     	return -1; 
     }
-    int fd = open(dev_path,O_WRONLY|O_CREAT|O_TRUNC,0644); //open device for writing
+    //int fd = open(dev_path,O_WRONLY|O_CREAT|O_TRUNC,0644); //open device for writing
+    int fd = open(dev_path, O_WRONLY); //open device for writing
     if (fd < 0) 
     {
     	perror("open dev"); 
@@ -649,6 +683,7 @@ static int process_one_file_threadsafe(const char *fname)
     } else {
         printf("[T%lu] REMOTE MISMATCH: original %s NOT OK\n", (unsigned long)pthread_self(), fname);
     }*/
+    pthread_mutex_unlock(&net_mtx);
 #endif
 
     return 0;
@@ -680,8 +715,25 @@ static void *worker(void *arg)
 }
 
 #ifdef RPI1
-int main(void)
+//int main(void)
+//{
+int main(int argc, char *argv[])
 {
+    if (argc != 3) 
+    {
+        fprintf(stderr, "Usage: %s <server_ip>\n", argv[0]);
+        return 1;
+    }
+    g_server_ip = argv[1];   // store server IP from command line 
+    const char *input_dir = argv[2]; // directory path with input files
+    
+    // change current working directory to input_dir
+    if (chdir(input_dir) < 0) 
+    {
+        perror("chdir input_dir");
+        return 1;
+    }
+
     char *names[MAX_FILES];
     int nfiles = 0;
     DIR *d = opendir(".");
