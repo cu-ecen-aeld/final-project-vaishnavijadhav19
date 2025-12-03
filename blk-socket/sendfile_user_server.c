@@ -38,11 +38,12 @@
 //#define TCP_SERVER_IP "10.0.2.15"//ubuntu testing
 static const char *g_server_ip = NULL;   // will be set from argv[1]
 #endif
-//#ifdef RPI2
-//#define TCP_SERVER_IP "127.0.0.1"  // <-- RPI IP
-//#define TCP_SERVER_IP "10.0.2.15"//ubuntu testing
-//static const char *g_server_ip = NULL;   // will be set from argv[1]
-//#endif
+
+#ifdef RPI2
+#define RPI2_OUT_DIR "/tmp/all_files_out" // relative folder on RPI2
+//#define RPI2_OUT_DIR "/home/vaishnavi/Documents/final_proj/final-project-vaishnavijadhav19/blk-socket/all_files_out" //for ubuntu testing
+
+#endif
 
 #define BUF_SIZE 4096
 #define MAX_FILES 1024
@@ -54,6 +55,8 @@ static const char *g_server_ip = NULL;   // will be set from argv[1]
 #define COMPBLK_LOGICAL_BLK_SIZE 4096
 
 static void print_hash_hex(const unsigned char h[32]);
+static int read_dev_to_file(const char *dev_path, const char *dst_path, size_t bytes_to_read);
+
 
 typedef struct {
     char **names; //file names
@@ -146,13 +149,14 @@ static int send_file_tcp_no_sha(const char *fname)
 	return -1;
     }
 
-    if (inet_pton(AF_INET, g_server_ip, &sa.sin_addr) <= 0) { // convert IP string to binary
+    if (inet_pton(AF_INET, g_server_ip, &sa.sin_addr) <= 0) // convert IP string to binary
+    { 
         perror("inet_pton");
         close(s);
         fclose(fp);
         return -1;
     }
-    //inet_pton(AF_INET, TCP_SERVER_IP, &sa.sin_addr); //convert IP string to binary
+
 
     if (connect(s, (struct sockaddr *)&sa, sizeof(sa)) < 0) 
     {
@@ -223,7 +227,6 @@ static int send_file_tcp_with_sha(const char *fname, unsigned char out_sha[32])
         fclose(fp);
         return -1;
     }
-    //inet_pton(AF_INET, TCP_SERVER_IP, &sa.sin_addr);
 
     if (connect(s, (struct sockaddr *)&sa, sizeof(sa)) < 0) 
     {
@@ -259,7 +262,6 @@ static int send_file_tcp_with_sha(const char *fname, unsigned char out_sha[32])
 }
 #endif
 
-//COMPUTE SHA
 static int compute_sha256_file(const char *filename, unsigned char out[32]) 
 {
     FILE *file = fopen(filename, "rb");
@@ -333,24 +335,31 @@ static int ends_with_ci(const char *s, const char *ext)
     return 1;
 }
 
-static void make_rx_name(const char *in, char *out, size_t cap) 
+
+static void make_name_with_suffix(const char *in, const char *suffix, char *out, size_t cap)
 {
     const char *dot = strrchr(in, '.');
-    if (dot && dot!=in) 
+
+    if (dot && dot != in) 
     {
-        size_t base_len=(size_t)(dot-in); // ength before dot
-        if (base_len+3+strlen(dot)+1 >= cap) 
+        size_t base_len = (size_t)(dot - in);
+        size_t suffix_len = strlen(suffix);
+        size_t ext_len    = strlen(dot);
+
+        if (base_len + suffix_len + ext_len + 1 > cap) 
         {
-            snprintf(out,cap,"%s_rx",in); 
-            return; 
+            snprintf(out, cap, "%s", in);
+            return;
         }
-        memcpy(out,in,base_len); 
-        memcpy(out+base_len,"_rx",3); 
-        strcpy(out+base_len+3,dot);
+
+        memcpy(out, in, base_len); // opy base name        
+        memcpy(out + base_len, suffix, suffix_len); //add suffix
+        
+        memcpy(out + base_len + suffix_len, dot, ext_len + 1); //add extension(+1 to copy '\0' )
     } 
     else 
     {
-        snprintf(out,cap,"%s_rx",in);
+        snprintf(out, cap, "%s%s", in, suffix); //no extension, just append 
     }
 }
 
@@ -362,7 +371,6 @@ static int write_file_to_dev(const char *src_path, const char *dev_path)
     	perror("fopen src"); 
     	return -1; 
     }
-    //int fd = open(dev_path,O_WRONLY|O_CREAT|O_TRUNC,0644); //open device for writing
     int fd = open(dev_path, O_WRONLY); //open device for writing
     if (fd < 0) 
     {
@@ -419,7 +427,7 @@ static size_t get_file_size(const char *path)
 }
 
 
-static int export_compressed_to_file(const char *dev_path, const char *out_path, size_t orig_size)
+static int export_compressed_to_file(const char *dev_path, const char *out_path, size_t orig_size) //reads compressed blocks from compblk using IOCTL and dumps
 {
     int fd = open(dev_path, O_RDONLY); //open device for reading
     if (fd < 0) 
@@ -443,7 +451,7 @@ static int export_compressed_to_file(const char *dev_path, const char *out_path,
     {
         struct compblk_ioctl_blockdump dump;
         memset(&dump, 0, sizeof(dump));
-        dump.bi = bi;
+        dump.bi = bi; //Request block index from driver
 
         if (ioctl(fd, COMPBLK_IOCTL_DUMP_STORED, &dump) < 0) 
         {
@@ -483,7 +491,7 @@ static int export_compressed_to_file(const char *dev_path, const char *out_path,
     return 0;
 }
 
-static int export_metadata_to_file(const char *dev_path, const char *meta_path, size_t orig_size)
+static int export_metadata_to_file(const char *dev_path, const char *meta_path, size_t orig_size) //dump block map info using GET_MAP_ENTRY IOCTL
 {
     FILE *fp = fopen(meta_path, "w"); //open metadata output file
     if (!fp) 
@@ -530,6 +538,126 @@ static int export_metadata_to_file(const char *dev_path, const char *meta_path, 
     close(fd);
     return 0;
 }
+
+
+
+#ifdef RPI2
+// RPI2 side --> read metadata + compressed file, push blocks into compblk
+static int import_to_dev_and_decompress(const char *orig_name, const char *compressed_path, const char *meta_path, char *out_path, size_t out_path_cap) //
+{
+    FILE *mfp = NULL; //Metadata file pointer
+    FILE *cfp = NULL; //Compressed file pointer
+    int devfd = -1;
+    int rc = 0;   // 0 = success, -1 = error 
+
+    mfp = fopen(meta_path, "r"); //Open metadata file
+    if (!mfp) 
+    {
+        perror("fopen meta");
+        return -1;
+    }
+
+    cfp = fopen(compressed_path, "rb"); //Open compressed data file
+    if (!cfp) 
+    {
+        perror("fopen compressed");
+        fclose(mfp);
+        return -1;
+    }
+
+    devfd = open(DEV_PATH, O_RDWR); //Open compblk device 
+    if (devfd < 0) 
+    {
+        perror("open dev import");
+        fclose(mfp);
+        fclose(cfp);
+        return -1;
+    }
+
+    size_t orig_size = 0, num_blocks = 0;
+    if (fscanf(mfp, "orig_size=%zu\n", &orig_size) != 1 || fscanf(mfp, "num_blocks=%zu\n\n", &num_blocks) != 1)
+    {
+        fprintf(stderr, "Failed to read metadata header\n");
+        rc = -1;
+    }
+
+    if (rc == 0)  //Only continue if header parse succeeded
+    {
+        for (;;) 
+        {
+            unsigned bi, off, len, flags, valid;
+            int r = fscanf(mfp, "block=%u\n""offset=%u\n""length=%u\n""flags=%u\n""valid=%u\n\n",&bi, &off, &len, &flags, &valid); // Parse one block entry
+            if (r == EOF) 
+            {
+                break;  
+            }
+            if (r != 5) //If not all 5 fields were read, metadata WRONG
+            {
+                fprintf(stderr, "Metadata parse error\n");
+                rc = -1;
+                break;
+            }
+
+   
+            if (!valid || len == 0) //Skip invalid or zero-length blocks
+                continue;
+
+            if (len > BUF_SIZE) 
+            {
+                fprintf(stderr, "Block too big (%u bytes)\n", len);
+                rc = -1;
+                break;
+            }
+
+            unsigned char buf[BUF_SIZE];
+            if (fread(buf, 1, len, cfp) != len) //Read compressed bytes from file
+            {
+                fprintf(stderr, "Short read in compressed file\n");
+                rc = -1;
+                break;
+            }
+
+            struct compblk_ioctl_blockdump dump; //Reuse blockdump struct as import payload
+            memset(&dump, 0, sizeof(dump));
+            dump.bi         = bi; //logical block index
+            dump.stored_len = len; //number of bytes compressed
+            dump.flags      = (unsigned char)flags; //compression flags
+            dump.valid      = (unsigned char)valid; // mark as valid
+            memcpy(dump.data, buf, len);
+
+            if (ioctl(devfd, COMPBLK_IOCTL_IMPORT_STORED, &dump) < 0)  // Push into driver
+            {
+                perror("ioctl IMPORT_STORED");
+                rc = -1;
+                break;
+            }
+        }
+    }
+
+
+    if (rc == 0) {
+        char out_name_only[1024];
+        make_name_with_suffix(orig_name, "_out", out_name_only, sizeof(out_name_only));
+        snprintf(out_path, out_path_cap, RPI2_OUT_DIR "/%s", out_name_only);
+
+        if (read_dev_to_file(DEV_PATH, out_path, orig_size) != 0)  // Read decompressed bytes 
+        {
+            fprintf(stderr, "read_dev_to_file failed\n");
+            rc = -1;
+        }
+    }
+
+    /* Common cleanup */
+    close(devfd);
+    fclose(mfp);
+    fclose(cfp);
+
+    return rc;
+}
+#endif
+
+
+
 
 static int read_dev_to_file(const char *dev_path, const char *dst_path, size_t bytes_to_read)
 {
@@ -606,8 +734,9 @@ static int process_one_file_threadsafe(const char *fname)
         return -1;
     }
 
+    
     char rxname[1024];
-    make_rx_name(fname, rxname, sizeof rxname); //rx filename after compression
+    make_name_with_suffix(fname, "_rx", rxname, sizeof rxname);
 
     size_t filesize = get_file_size(fname);
     if (filesize == 0) 
@@ -634,58 +763,47 @@ static int process_one_file_threadsafe(const char *fname)
         return -1;
     }
 
-    char out_final[1024];
-    snprintf(out_final, sizeof out_final, "%s_out", fname);
-    if (read_dev_to_file(DEV_PATH, out_final, filesize) != 0) // Read decompressed data from the device to file
-    {
-        fprintf(stderr, "read dev to file failed for %s\n", fname);
-        pthread_mutex_unlock(&dev_mtx);
-        return -1;
-    }
-
-
-    unsigned char out_hash[32];
-    if (compute_sha256_file(out_final, out_hash) != 0) 
-    {
-        fprintf(stderr, "[T%lu] SHA-256 failed on decompressed %s_out\n", (unsigned long)pthread_self(), fname);
-        pthread_mutex_unlock(&dev_mtx);
-        return -1;
-    }
-
-    printf("[T%lu] decompressed SHA-256 (local): ",(unsigned long)pthread_self()); //Print decompressed file hash
-    print_hash_hex(out_hash);
-
-    if (memcmp(in_hash, out_hash, 32) == 0) 
-    {
-        printf("[T%lu] FILE MATCH: %s == %s_out\n", (unsigned long)pthread_self(), fname, out_final); //Compare original vs decompressed hash 
-    } 
-    else 
-    {
-        printf("[T%lu] FILE MISMATCH: %s vs %s_out\n", (unsigned long)pthread_self(), fname, out_final);
-    }
 
     pthread_mutex_unlock(&dev_mtx);
 
+
+	
 #ifdef RPI1
-    // Send compressed file (no SHA)
     pthread_mutex_lock(&net_mtx);
-    send_file_tcp_no_sha(rxname);
 
-    // Send metadata file (expect SHA back)
-    /*unsigned char sha_from_rpi2[32];
-    send_file_tcp_with_sha(meta_file, sha_from_rpi2);
-    pthread_mutex_unlock(&net_mtx);
+    //1) Send compressed file (no SHA expected)
+    if (send_file_tcp_no_sha(rxname) != 0) {
+        fprintf(stderr, "[T%lu] Failed to send compressed file %s\n",
+                (unsigned long)pthread_self(), rxname);
+        pthread_mutex_unlock(&net_mtx);
+        return -1;
+    }
 
-    printf("[T%lu] RPI2 returned SHA: ", (unsigned long)pthread_self());
-    print_hash_hex(sha_from_rpi2);
+    //2) Send metadata file and expect SHA of decompressed output from RPI2
+    unsigned char remote_sha[32];
+    if (send_file_tcp_with_sha(meta_file, remote_sha) != 0) {
+        fprintf(stderr, "[T%lu] Failed to send metadata or receive SHA\n",
+                (unsigned long)pthread_self());
+        pthread_mutex_unlock(&net_mtx);
+        return -1;
+    }
 
-    if (memcmp(in_hash, sha_from_rpi2, 32) == 0) {
-        printf("[T%lu] REMOTE MATCH: original %s OK\n", (unsigned long)pthread_self(), fname);
+    printf("[T%lu] remote SHA-256 (decompressed on RPI2): ",
+           (unsigned long)pthread_self());
+    print_hash_hex(remote_sha);
+
+    // 3) Compare original file SHA vs decompressed file SHA
+    if (memcmp(in_hash, remote_sha, 32) == 0) {
+        printf("[T%lu] REMOTE MATCH: %s == decompressed file on RPI2\n",
+               (unsigned long)pthread_self(), fname);
     } else {
-        printf("[T%lu] REMOTE MISMATCH: original %s NOT OK\n", (unsigned long)pthread_self(), fname);
-    }*/
+        printf("[T%lu] REMOTE MISMATCH: %s != decompressed file on RPI2\n",
+               (unsigned long)pthread_self(), fname);
+    }
+
     pthread_mutex_unlock(&net_mtx);
 #endif
+
 
     return 0;
 }
@@ -737,7 +855,7 @@ int main(int argc, char *argv[])
 
     char *names[MAX_FILES];
     int nfiles = 0;
-    DIR *d = opendir(".");
+    DIR *d = opendir("."); //Open current directory
     if (!d) {
         perror("opendir");
         return 1;
@@ -802,11 +920,11 @@ static int handle_one_connection(int cfd)
 {
     // 1. Read name length
     uint32_t name_len_net;
-    if (read_all(cfd, &name_len_net, sizeof(name_len_net)) < 0)
+    if (read_all(cfd, &name_len_net, sizeof(name_len_net)) < 0) 
     {
         return -1;
     }
-    uint32_t name_len = ntohl(name_len_net);
+    uint32_t name_len = ntohl(name_len_net); 
     if (name_len == 0 || name_len > 1023) 
     {
         fprintf(stderr, "Bad name_len: %u\n", name_len);
@@ -829,11 +947,11 @@ static int handle_one_connection(int cfd)
     }
     uint64_t filesize = be64toh(fs_net);
 
-    // 4. Save as "rpi2_originalname"
-    char outname[1200];
-    snprintf(outname, sizeof(outname), "rpi2_%s", fname);
+    
+    char outname[1200]; //full path to store received file
+    snprintf(outname, sizeof(outname), RPI2_OUT_DIR "/rpi2_%s", fname);
 
-    FILE *out = fopen(outname, "wb");
+    FILE *out = fopen(outname, "wb"); //Open output file
     if (!out) 
     {
         perror("fopen out");
@@ -841,7 +959,7 @@ static int handle_one_connection(int cfd)
     }
 
     unsigned char buffer[BUF_SIZE];
-    uint64_t remaining = filesize;
+    uint64_t remaining = filesize; //bytes remaining to receive
     while (remaining > 0) 
     {
         size_t to_read = (remaining > BUF_SIZE) ? BUF_SIZE : (size_t)remaining;
@@ -862,7 +980,7 @@ static int handle_one_connection(int cfd)
             fclose(out);
             return -1;
         }
-        size_t w = fwrite(buffer, 1, (size_t)n, out);
+        size_t w = fwrite(buffer, 1, (size_t)n, out); //Write chunk to file
         if (w < (size_t)n) 
         {
             perror("fwrite out");
@@ -879,27 +997,43 @@ static int handle_one_connection(int cfd)
         fsync(outfd);
     }
     fclose(out);
+    
+    if (ends_with_ci(fname, ".meta")) 
+    {
+	    char orig_name[1024];
+	    strncpy(orig_name, fname, sizeof(orig_name));
+	    orig_name[sizeof(orig_name)-1] = '\0';
+	    char *pos = strstr(orig_name, ".meta");
+	    if (pos) *pos = '\0';
 
-    // 5. Compute SHA on received file  
-    unsigned char hash[32];
-    if (compute_sha256_file(outname, hash) != 0) 
-    {
-        fprintf(stderr, "SHA-256 failed on received file %s\n", outname);
-        return -1;
-    }
-    printf("Received file %s (%llu bytes), SHA-256: ", outname, (unsigned long long)filesize);
-    print_hash_hex(hash);
-    if (write_all(cfd, hash, 32) < 0) 
-    {
-    	fprintf(stderr, "Failed to send SHA256 back to client\n");
-    } 
+	    char comp_name[1024], comp_path[1200], meta_path[1200];
+	    make_name_with_suffix(orig_name, "_rx", comp_name, sizeof(comp_name));
+	    snprintf(comp_path, sizeof(comp_path), RPI2_OUT_DIR "/rpi2_%s", comp_name);
+
+	    // This meta file itself is already saved as outname
+	    snprintf(meta_path, sizeof(meta_path), "%s", outname);
+
+	    // Prepare an output buffer
+	    char out_path[1200];
+	    if (import_to_dev_and_decompress(orig_name, comp_path, meta_path, out_path, sizeof(out_path)) == 0) 
+	    {
+		// Decompression succeeded, compute SHA-256 of decompressed file
+		unsigned char out_sha[32];
+		if (compute_sha256_file(out_path, out_sha) == 0) 
+		{
+		    write_all(cfd, out_sha, 32); //send SHA-256 back to client
+		}
+	    }
+     }
+
+
 
     return 0;
 }
 
 int main(void)
 {
-    int s = socket(AF_INET, SOCK_STREAM, 0);
+    int s = socket(AF_INET, SOCK_STREAM, 0); //Create TCP socket
     if (s < 0) 
     {
         perror("socket");
@@ -915,14 +1049,14 @@ int main(void)
     addr.sin_port = htons(TCP_PORT);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) < 0) 
+    if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) < 0)  //bind socket
     {
         perror("bind");
         close(s);
         return 1;
     }
 
-    if (listen(s, 5) < 0) 
+    if (listen(s, 5) < 0) //start listening
     {
         perror("listen");
         close(s);
@@ -935,14 +1069,13 @@ int main(void)
     {
         struct sockaddr_in peer;
         socklen_t plen = sizeof(peer);
-        int cfd = accept(s, (struct sockaddr *)&peer, &plen);
+        int cfd = accept(s, (struct sockaddr *)&peer, &plen); // Accept one client
         if (cfd < 0) 
         {
             perror("accept");
             continue;
         }
 
-        // Handle exactly one file per connection
         handle_one_connection(cfd);
         close(cfd);
     }
